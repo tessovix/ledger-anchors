@@ -1,0 +1,39 @@
+# Uptime check every 15 minutes. A failed run sends an email to the maintainers (free alert).
+# This repository is public, so Actions minutes are free.
+name: Uptime
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uptime
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the public endpoints (3 tries each)
+        run: |
+          set -uo pipefail
+          fail=0
+          check() { # check NAME URL
+            for i in 1 2 3; do
+              code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$2")"
+              [ "$code" = 200 ] && { echo "ok   $1"; return 0; }
+              sleep 20
+            done
+            echo "::error::$1 returned HTTP $code"; fail=1
+          }
+          check "control plane (api.tessovix.com/v1/health)" https://api.tessovix.com/v1/health
+          check "gateway (gateway.tessovix.com/healthz)" https://gateway.tessovix.com/healthz
+          check "site (beaver.tessovix.com)" https://beaver.tessovix.com/
+          nodes="$(curl -fsS --max-time 15 https://api.tessovix.com/v1/tessovix/stats | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["nodes_connected"])' || echo 0)"
+          if [ "$nodes" -ge 1 ]; then echo "ok   nodes connected: $nodes"; else echo "::error::no node is connected"; fail=1; fi
+          exit "$fail"
